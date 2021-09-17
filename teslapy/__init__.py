@@ -297,17 +297,7 @@ class VehicleError(Exception):
 
 
 class JsonDict(dict):
-    """ Dictionary with attribute access """
-
-    __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
-
-    def __getattr__(self, name):
-        """ x.__getattr__(y) <==> x.y """
-        try:
-            return self[name]
-        except KeyError:
-            raise AttributeError(name)
+    """ Pretty printing dictionary """
 
     def __str__(self):
         """ Serialize dict to JSON formatted string with indents """
@@ -452,7 +442,7 @@ class Vehicle(JsonDict):
 
     def get_service_scheduling_data(self):
         """ Retrieves next service appointment for this vehicle """
-        response = self.api('SERVICE_SELF_SCHEDULING_ELIGIBILITY')['response']
+        response = self.api('GET_UPCOMING_SERVICE_VISIT_DATA')['response']
         return next((enabled for enabled in response['enabled_vins']
                      if enabled['vin'] == self['vin']), {})
 
