@@ -311,7 +311,7 @@ class JsonDict(dict):
 
     def __str__(self):
         """ Serialize dict to JSON formatted string with indents """
-        return json.dumps(self, indent=4)
+        return json.dumps(repr(self), indent=4)
 
 
 class Vehicle(JsonDict):

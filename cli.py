@@ -6,6 +6,7 @@ from __future__ import print_function
 import ast
 import logging
 import argparse
+import json
 try:
     from selenium import webdriver
     from selenium.webdriver.support import expected_conditions as EC
@@ -73,6 +74,8 @@ def main():
             print('Product %d:' % i)
             # Show information or invoke API depending on arguments
             if args.list:
+                print(repr(product))
+                print(type(product))
                 print(product)
             if isinstance(product, Vehicle):
                 if args.option:

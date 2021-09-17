@@ -253,6 +253,7 @@ def custom_auth(url):
 
 def main():
     parser = argparse.ArgumentParser(description='Tesla Owner API Menu')
+    parser.add_argument('-e', dest='email', help='login email', required=False)
     parser.add_argument('-d', '--debug', action='store_true',
                         help='set logging level to debug')
     parser.add_argument('--verify', action='store_false',
@@ -268,7 +269,10 @@ def main():
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         geopy.geocoders.options.default_ssl_context = ctx
-    email = raw_input('Enter email: ')
+    if not args.email:
+        email = raw_input('Enter email: ')
+    else:
+        email = args.email
     with Tesla(email, verify=args.verify, proxy=args.proxy) as tesla:
         if webdriver:
             tesla.authenticator = custom_auth
