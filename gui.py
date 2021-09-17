@@ -14,6 +14,7 @@ try:
     from selenium import webdriver
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.common.exceptions import WebDriverException
 except ImportError:
     webdriver = None
 try:
@@ -319,7 +320,7 @@ class Dashboard(Frame):
         self.speed.text(app.vehicle.dist_units(speed, True))
         self.shift_state.text(str(dr['shift_state']))
         self.heading.text(self._heading_to_str(dr['heading']))
-        self.gps.text(app.update_thread.location.address)
+        self.gps.text(app.update_thread.location)
         # Charging state
         self.charging_state.text(ch['charging_state'])
         ttfc = divmod(ch['time_to_full_charge'] * 60, 60)
@@ -503,9 +504,9 @@ class App(Tk):
 
     def login(self):
         """ Display login dialog and start new thread to get vehicle list """
-        result = askstring('Login', 'Use browser to login.\nPage Not Found '
-                           'will be shown at success.\n\nEmail:',
-                           initialvalue=self.email)
+        prompt = 'Email:' if webdriver else 'Use browser to login.\n' \
+                 'Page Not Found will be shown at success.\n\nEmail:'
+        result = askstring('Login', prompt, initialvalue=self.email)
         if result:
             self.email = result
             self.status.text('Logging in...')
@@ -917,7 +918,7 @@ class UpdateThread(threading.Thread):
                     # Lookup address at coordinates
                     osm = Nominatim(user_agent='TeslaPy',
                                     proxies=self.vehicle.tesla.proxies)
-                    self.location = osm.reverse(coords)
+                    self.location = osm.reverse(coords).address
                 except GeocoderTimedOut:
                     UpdateThread._coords = None  # Force lookup
                 except GeopyError as e:
@@ -979,8 +980,9 @@ class LoginThread(threading.Thread):
         try:
             self.tesla.fetch_token()
             self.vehicles = self.tesla.vehicle_list()
-        except (teslapy.RequestException, teslapy.OAuth2Error, ValueError) as e:
-            self.exception = e
+        except (teslapy.RequestException, teslapy.OAuth2Error,
+                WebDriverException) as e:
+            self.exception = str(e).replace('\n', '')
 
 class StatusThread(threading.Thread):
     """ Retrieve vehicle status summary """

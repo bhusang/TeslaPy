@@ -34,7 +34,7 @@ def show_vehicle_data(vehicle):
     coords = '%s, %s' % (dr['latitude'], dr['longitude'])
     try:
         osm = Nominatim(user_agent='TeslaPy', proxies=vehicle.tesla.proxies)
-        location = osm.reverse(coords)
+        location = osm.reverse(coords).address
     except GeocoderTimedOut as e:
         logging.error(e)
         location = coords
@@ -96,7 +96,7 @@ def show_vehicle_data(vehicle):
     print(fmt.format(str(dr['power']) + ' kW', vehicle.dist_units(speed, True)))
     fmt = 'Shift State: {:25} Heading: {}'
     print(fmt.format(str(dr['shift_state']), heading_to_str(dr['heading'])))
-    print(u'GPS: {:.75}'.format(location.address))
+    print(u'GPS: {:.75}'.format(location))
     print('-'*80)
     # Charging state
     fmt = 'Charging State: {:22} Time To Full Charge: {:02.0f}:{:02.0f}'
