@@ -10,11 +10,11 @@ import geopy.geocoders
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut
 try:
-    from selenium import webdriver
+    from selenium import webdriver  # 3.13.0 or higher required
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.support.ui import WebDriverWait
 except ImportError:
-    webdriver = None
+    webdriver = None  # Optional import
 from teslapy import Tesla
 
 raw_input = vars(__builtins__).get('raw_input', input)  # Py2/3 compatibility
@@ -38,21 +38,15 @@ def show_vehicle_data(vehicle):
     except GeocoderTimedOut as e:
         logging.error(e)
         location = coords
+    fmt = 'Outside Temperature: {:17} Inside Temperature: {}'
     if cl['outside_temp'] is not None and cl['inside_temp'] is not None:
     # Climate state
-        fmt = 'Outside Temperature: {:17} Inside Temperature: {}'
         print(fmt.format(vehicle.temp_units(cl['outside_temp']),
                         vehicle.temp_units(cl['inside_temp'])))
     else:
-        fmt = 'Outside Temperature: {:17} Inside Temperature: {}'
         print(fmt.format('No reading avail','No reading avail'))
 
     fmt = 'Driver Temperature Setting: {:10} Passenger Temperature Setting: {}'
-    print(fmt.format(vehicle.temp_units(cl['driver_temp_setting']),
-                     vehicle.temp_units(cl['passenger_temp_setting'])))
-    fmt = 'Is Climate On: {:23} Fan Speed: {}'
-    print(fmt.format(str(cl['is_climate_on']), cl['fan_status']))
-    fmt = 'Driver Seat Heater: {:18} Passenger Seat Heater: {}'
     print(fmt.format(str(cl['seat_heater_left']), str(cl['seat_heater_right'])))
     fmt = 'Is Front Defroster On: {:15} Is Rear Defroster On: {}'
     print(fmt.format(str(cl['is_front_defroster_on']),
@@ -246,7 +240,9 @@ def menu(vehicle):
                 print('Not available')
 
 def custom_auth(url):
-    with webdriver.Chrome() as browser:
+    with [webdriver.Chrome, webdriver.Edge, webdriver.Firefox, webdriver.Opera,
+          webdriver.Safari][args.web]() as browser:
+        logging.info('Selenium opened %s', browser.capabilities['browserName'])
         browser.get(url)
         WebDriverWait(browser, 300).until(EC.url_contains('void/callback'))
         return browser.current_url
@@ -293,4 +289,17 @@ def main():
         menu(vehicles[idx])
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Tesla Owner API Menu')
+    parser.add_argument('-d', '--debug', action='store_true',
+                        help='set logging level to debug')
+    parser.add_argument('--verify', action='store_false',
+                        help='disable verify SSL certificate')
+    if webdriver:
+        parser.add_argument('--chrome', action='store_const', dest='web',
+                            const=0, default=0, help='use Chrome (default)')
+        for c, s in enumerate(('edge', 'firefox', 'opera', 'safari'), start=1):
+            parser.add_argument('--' + s, action='store_const', dest='web',
+                                const=c, help='use %s browser' % s.title())
+    parser.add_argument('--proxy', help='proxy server URL')
+    args = parser.parse_args()
     main()

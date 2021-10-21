@@ -2,12 +2,15 @@
 
 A Python implementation based on [unofficial documentation](https://tesla-api.timdorr.com/) of the client side interface to the Tesla Motors Owner API, which provides functionality to monitor and control Tesla products remotely.
 
+[![Version](https://img.shields.io/pypi/v/TeslaPy)](https://pypi.org/project/TeslaPy)
+[![Downloads](https://pepy.tech/badge/TeslaPy/month)](https://pepy.tech/project/TeslaPy)
+
 ## Overview
 
 This module depends on Python [requests](https://pypi.org/project/requests/), [requests_oauthlib](https://pypi.org/project/requests-oauthlib/) and [websocket-client](https://pypi.org/project/websocket-client/). The `Tesla` class extends `requests.Session` and therefore inherits methods like `get()` and `post()` that can be used to perform API calls. All calls to the Owner API are intercepted by the `request()` method to add the JSON Web Token (JWT) bearer, which is acquired after authentication. Module characteristics:
 
 * It implements Tesla's new [OAuth 2](https://oauth.net/2/) Single Sign-On service.
-* Acquired tokens are cached to disk (*cache.json*) for persistence.
+* Acquired tokens are stored in current working directory in *cache.json* file for persistence by default.
 * The cache stores tokens of each authorized identity (email).
 * Authentication is only needed when a new token is requested (usually once).
 * The token is automatically refreshed when expired without the need to reauthenticate.
@@ -152,6 +155,8 @@ with teslapy.Tesla('elon@tesla.com', cache_loader=db_load, cache_dumper=db_dump)
 
 Take a look at [cli.py](https://github.com/tdorssers/TeslaPy/blob/master/cli.py), [menu.py](https://github.com/tdorssers/TeslaPy/blob/master/menu.py) or [gui.py](https://github.com/tdorssers/TeslaPy/blob/master/gui.py) for more code examples.
 
+## Commands
+
 These are the major commands:
 
 | Endpoint | Parameters | Value |
@@ -164,9 +169,11 @@ These are the major commands:
 | CLIMATE_OFF | | |
 | MAX_DEFROST | `on` | `true` or `false` |
 | CHANGE_CLIMATE_TEMPERATURE_SETTING | `driver_temp`, `passenger_temp` | temperature in celcius |
+| SCHEDULED_CHARGING <sup>1</sup> | `enable`, `time` | `true` or `false`, minutes past midnight |
+| CHARGING_AMPS <sup>1</sup> | `charging_amps` | amperage |
 | CHANGE_CHARGE_LIMIT | `percent` | percentage |
 | CHANGE_SUNROOF_STATE | `state` | `vent` or `close` |
-| WINDOW_CONTROL <sup>1</sup> | `command`, `lat`, `lon` | `vent` or `close`, `0`, `0` |
+| WINDOW_CONTROL <sup>2</sup> | `command`, `lat`, `lon` | `vent` or `close`, `0`, `0` |
 | ACTUATE_TRUNK | `which_trunk` | `rear` or `front` |
 | REMOTE_START | `password` | password |
 | TRIGGER_HOMELINK | `lat`, `lon` | current lattitude and logitude |
@@ -193,7 +200,9 @@ These are the major commands:
 | REMOTE_SEAT_HEATER_REQUEST | `heater`, `level` | seat 0-5, level 0-3 |
 | REMOTE_STEERING_WHEEL_HEATER_REQUEST | `on` | `true` or `false` |
 
-<sup>1</sup> `close` requires `lat` and `lon` values to be near the current location of the car.
+<sup>1</sup> requires car version 2021.36 or higher.
+
+<sup>2</sup> `close` requires `lat` and `lon` values to be near the current location of the car.
 
 ## Exceptions
 
@@ -210,22 +219,21 @@ All `requests.exceptions` and `oauthlib.oauth2.rfc6749.errors` classes are impor
 
 Additionally, `sync_wake_up()` raises `teslapy.VehicleError` when the vehicle does not come online within the specified timeout. And `command()` also raises `teslapy.VehicleError` when the vehicle command response result is `False`. For instance, if one of the media endpoints is called and there is no user present in the vehicle, the following exception is raised: `VehicleError: user_not_present`.
 
-When the `passcode_getter` or `factor_selector` function return an empty string and your account has MFA enabled, then the module will cancel the transaction and this exception will be raised: `CustomOAuth2Error: (login_cancelled) User cancelled login`.
-
-If you get a `requests.exceptions.HTTPError: 400 Client Error: endpoint_deprecated:_please_update_your_app for url: https://owner-api.teslamotors.com/oauth/token` then you are probably using an old version of this module. As of January 29, 2021, Tesla updated this endpoint to follow [RFC 7523](https://tools.ietf.org/html/rfc7523) and requires the use of the SSO service (auth.tesla.com) for authentication.
+As of January 29, 2021, Tesla updated this endpoint to follow [RFC 7523](https://tools.ietf.org/html/rfc7523) and requires the use of the SSO service (auth.tesla.com) for authentication. If you get a `requests.exceptions.HTTPError: 400 Client Error: endpoint_deprecated:_please_update_your_app for url: https://owner-api.teslamotors.com/oauth/token` then you are probably using an old version of this module.
 
 As of September 3, 2021, Tesla has added ReCaptcha to the login form. This caused the headless login implemented by TeslaPy to break. If you get a `ValueError: Credentials rejected. Recaptcha is required` and you are using correct credentials then you are probably using an old version of this module.
 
 ## Demo applications
 
-The source repository contains three demo applications.
+The source repository contains three demo applications that *optionally* use [selenium](https://pypi.org/project/selenium/) to automate weblogin. Version 3.13.0 or higher is required and version 4.0.0 or higher is required for Edge Chromium.
 
 [cli.py](https://github.com/tdorssers/TeslaPy/blob/master/cli.py) is a simple CLI application that can use almost all functionality of the TeslaPy module. The filter option allows you to select a product if more than one product is linked to your account. API output is JSON formatted:
 
 ```
 usage: cli.py [-h] -e EMAIL [-f FILTER] [-a API] [-k KEYVALUE] [-c COMMAND]
               [-l] [-o] [-v] [-w] [-g] [-b] [-n] [-m] [-s] [-d] [-r]
-              [--service] [--verify] [--proxy PROXY]
+              [--service] [--verify] [--chrome] [--edge] [--firefox] [--opera]
+              [--safari] [--proxy PROXY]
 
 Tesla Owner API CLI
 
@@ -249,10 +257,15 @@ optional arguments:
   -r, --stream   receive streaming vehicle data on-change
   --service      get service self scheduling eligibility
   --verify       disable verify SSL certificate
+  --chrome       use Chrome (default)
+  --edge         use Edge browser
+  --firefox      use Firefox browser
+  --opera        use Opera browser
+  --safari       use Safari browser
   --proxy PROXY  proxy server URL
 ```
 
-Example usage of [cli.py](https://github.com/tdorssers/TeslaPy/blob/master/cli.py) using a cached token:
+Example usage of [cli.py](https://github.com/tdorssers/TeslaPy/blob/master/cli.py):
 
 `python cli.py -e elon@tesla.com -w -a ACTUATE_TRUNK -k which_trunk=front`
 
@@ -260,9 +273,17 @@ Example usage of [cli.py](https://github.com/tdorssers/TeslaPy/blob/master/cli.p
 
 ![](https://raw.githubusercontent.com/tdorssers/TeslaPy/master/media/menu.png)
 
-[gui.py](https://github.com/tdorssers/TeslaPy/blob/master/gui.py) is a graphical interface using `tkinter`. API calls are performed asynchronously using threading. The GUI supports auto refreshing of the vehicle data and the GUI displays a composed vehicle image. Note that the vehicle will not go to sleep, if auto refresh is enabled. The application depends on [geopy](https://pypi.org/project/geopy/) to convert GPS coordinates to a human readable address. If Tcl/Tk GUI toolkit version of your Python installation is lower than 8.6 then [pillow](https://pypi.org/project/Pillow/) is required to display the vehicle image.
+[gui.py](https://github.com/tdorssers/TeslaPy/blob/master/gui.py) is a graphical user interface using `tkinter`. API calls are performed asynchronously using threading. The GUI supports auto refreshing of the vehicle data and displays a composed vehicle image. Note that the vehicle will not go to sleep, if auto refresh is enabled. The application depends on [geopy](https://pypi.org/project/geopy/) to convert GPS coordinates to a human readable address. If Tcl/Tk GUI toolkit version of your Python installation is lower than 8.6 then [pillow](https://pypi.org/project/Pillow/) is required to display the vehicle image. User preferences, such as which web browser to use for authentication, persist upon application restart.
 
 ![](https://raw.githubusercontent.com/tdorssers/TeslaPy/master/media/gui.png)
+
+The demo applications can be containerized using the provided Dockerfile. A bind volume is used to store *cache.json* and *gui.ini* in the current directory on the host machine:
+
+```
+sudo docker build -t teslapy .
+xhost +local:*
+sudo docker run -ti --net=host --privileged -v "$(pwd)":/home/tsla teslapy
+```
 
 ## Vehicle data
 
@@ -548,10 +569,14 @@ TeslaPy is available on PyPI:
 
 `python -m pip install teslapy`
 
-Make sure you have [Python](https://www.python.org/) 2.7+ or 3.5+ installed on your system. Alternatively, clone the repository to your machine and run demo application [cli.py](https://github.com/tdorssers/TeslaPy/blob/master/cli.py), [menu.py](https://github.com/tdorssers/TeslaPy/blob/master/menu.py) or [gui.py](https://github.com/tdorssers/TeslaPy/blob/master/gui.py) to get started, after installing [requests_oauthlib](https://pypi.org/project/requests-oauthlib/), [geopy](https://pypi.org/project/geopy/), [selenium](https://pypi.org/project/selenium/) and [websocket-client](https://pypi.org/project/websocket-client/) using [PIP](https://pypi.org/project/pip/) as follows:
+Make sure you have [Python](https://www.python.org/) 2.7+ or 3.5+ installed on your system. Alternatively, clone the repository to your machine and run demo application [cli.py](https://github.com/tdorssers/TeslaPy/blob/master/cli.py), [menu.py](https://github.com/tdorssers/TeslaPy/blob/master/menu.py) or [gui.py](https://github.com/tdorssers/TeslaPy/blob/master/gui.py) to get started, after installing [requests_oauthlib](https://pypi.org/project/requests-oauthlib/), [geopy](https://pypi.org/project/geopy/), [selenium](https://pypi.org/project/selenium/) (optional) and [websocket-client](https://pypi.org/project/websocket-client/) using [PIP](https://pypi.org/project/pip/) as follows:
 
 `python -m pip install requests_oauthlib geopy selenium websocket-client`
 
 and install [ChromeDriver](https://sites.google.com/chromium.org/driver/) to use Selenium or on Ubuntu as follows:
 
 `sudo apt-get install python3-requests-oauthlib python3-geopy python3-selenium python3-websocket`
+
+If you prefer Firefox, install [GeckoDriver](https://github.com/mozilla/geckodriver/releases) or on Ubuntu as follows:
+
+`sudo apt-get install firefox-geckodriver`

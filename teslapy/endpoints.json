@@ -89,9 +89,39 @@
     "URI": "api/1/vehicles/{vehicle_id}/command/set_temps",
     "AUTH": true
   },
+  "HVAC_BIOWEAPON_MODE": {
+    "TYPE": "POST",
+    "URI": "api/1/vehicles/{vehicle_id}/command/set_bioweapon_mode",
+    "AUTH": true
+  },
+  "SCHEDULED_DEPARTURE": {
+    "TYPE": "POST",
+    "URI": "api/1/vehicles/{vehicle_id}/command/set_scheduled_departure",
+    "AUTH": true
+  },
+  "SCHEDULED_CHARGING": {
+    "TYPE": "POST",
+    "URI": "api/1/vehicles/{vehicle_id}/command/set_scheduled_charging",
+    "AUTH": true
+  },
+  "CHARGING_AMPS": {
+    "TYPE": "POST",
+    "URI": "api/1/vehicles/{vehicle_id}/command/set_charging_amps",
+    "AUTH": true
+  },
   "CHANGE_CHARGE_LIMIT": {
     "TYPE": "POST",
     "URI": "api/1/vehicles/{vehicle_id}/command/set_charge_limit",
+    "AUTH": true
+  },
+  "CHANGE_CHARGE_MAX": {
+    "TYPE": "POST",
+    "URI": "api/1/vehicles/{vehicle_id}/command/charge_max_range",
+    "AUTH": true
+  },
+  "CHANGE_CHARGE_STANDARD": {
+    "TYPE": "POST",
+    "URI": "api/1/vehicles/{vehicle_id}/command/charge_standard",
     "AUTH": true
   },
   "CHANGE_SUNROOF_STATE": {
@@ -515,6 +545,11 @@
     "URI": "api/1/vehicles/{vehicle_id}/command/share",
     "AUTH": true
   },
+  "SEND_SC_TO_VEHICLE": {
+    "TYPE": "POST",
+    "URI": "api/1/vehicles/{vehicle_id}/command/navigation_sc_request",
+    "AUTH": true
+  },
   "REMOTE_SEAT_HEATER_REQUEST": {
     "TYPE": "POST",
     "URI": "api/1/vehicles/{vehicle_id}/command/remote_seat_heater_request",
@@ -680,6 +715,21 @@
     "URI": "bff/v2/mobile-app/service/history",
     "AUTH": true
   },
+  "SERVICE_SURVEY_ELIGIBILITY": {
+    "TYPE": "GET",
+    "URI": "bff/v2/mobile-app/service/surveys",
+    "AUTH": true
+  },
+  "SERVICE_SURVEY_QUESTIONS": {
+    "TYPE": "POST",
+    "URI": "bff/v2/mobile-app/service/surveys",
+    "AUTH": true
+  },
+  "SERVICE_SURVEY_ANSWER_QUESTIONS": {
+    "TYPE": "PUT",
+    "URI": "bff/v2/mobile-app/service/surveys",
+    "AUTH": true
+  },
   "SERVICE_LOCATIONS": {
     "TYPE": "GET",
     "URI": "bff/v2/mobile-app/service/center/locations",
@@ -775,9 +825,9 @@
     "URI": "bff/v2/mobile-app/macgyver/categories",
     "AUTH": true
   },
-  "SERVICE_MACGYVER_QUESTIONS": {
+  "SERVICE_ACTIVITY_INFO": {
     "TYPE": "GET",
-    "URI": "bff/v2/mobile-app/macgyver/questions/{serviceVisitID}",
+    "URI": "bff/v2/mobile-app/macgyver/activity-info/{serviceVisitID}",
     "AUTH": true
   },
   "SERVICE_MACGYVER_POST_CUSTOMER_ANSWERS": {
@@ -855,9 +905,19 @@
     "URI": "bff/v2/mobile-app/energy-documents/documents/{documentId}",
     "AUTH": true
   },
+  "ENERGY_GET_TROUBLESHOOTING_GUIDE": {
+    "TYPE": "GET",
+    "URI": "bff/v2/mobile-app/energy-service/troubleshooting/{troubleshootingFlow}",
+    "AUTH": true
+  },
   "LOOTBOX_USER_INFO": {
     "TYPE": "GET",
     "URI": "bff/v2/mobile-app/referrals",
+    "AUTH": true
+  },
+  "LOOTBOX_GET_ONBOARDING_COPY": {
+    "TYPE": "GET",
+    "URI": "mobile-app/referrals/getOnboardingCopy",
     "AUTH": true
   },
   "LOOTBOX_PAST_REFERRAL_DATA": {
@@ -975,6 +1035,16 @@
     "URI": "bff/v2/mobile-app/subscriptions/offline-order",
     "AUTH": true
   },
+  "SUBSCRIPTIONS_POST_CREATE_OFFLINE_ORDER": {
+    "TYPE": "GET",
+    "URI": "bff/v2/mobile-app/subscriptions/offline-order",
+    "AUTH": true
+  },
+  "GET_WALLET_FEATURE_FLAG": {
+    "TYPE": "GET",
+    "URI": "bff/v2/mobile-app/feature-flag/enable-subscriptions-wallet-channel",
+    "AUTH": true
+  },
   "SUBSCRIPTIONS_PURCHASE": {
     "TYPE": "POST",
     "URI": "bff/v2/mobile-app/subscriptions",
@@ -1010,6 +1080,16 @@
     "URI": "bff/v2/mobile-app/bill-me-later/token",
     "AUTH": true
   },
+  "MANAGE_GET_BILL_ME_LATER_TOGGLE": {
+    "TYPE": "GET",
+    "URI": "bff/v2/mobile-app/bill-me-later/security-toggle",
+    "AUTH": true
+  },
+  "MANAGE_POST_BILL_ME_LATER_TOGGLE": {
+    "TYPE": "POST",
+    "URI": "bff/v2/mobile-app/bill-me-later/security-toggle",
+    "AUTH": true
+  },
   "UPGRADES_SUBSCRIPTIONS_SHARED_BILLING_ADDRESS_FEATURE_FLAG": {
     "TYPE": "GET",
     "URI": "bff/v2/mobile-app/billing-address/feature-flag/TAO-8065-in-app-BillingBlock-Enable",
@@ -1027,6 +1107,11 @@
   },
   "PAYMENTS_GET_SIGNED_USER_TOKEN": {
     "TYPE": "GET",
+    "URI": "bff/v2/mobile-app/payments/signed-user-token",
+    "AUTH": true
+  },
+  "PAYMENTS_POST_SIGNED_USER_TOKEN": {
+    "TYPE": "POST",
     "URI": "bff/v2/mobile-app/payments/signed-user-token",
     "AUTH": true
   },
@@ -1195,19 +1280,24 @@
     "URI": "Just a placeholder",
     "AUTH": true
   },
-  "INSURANCE_GET_ELIGIBLE_FOR_TELEMATICS": {
+  "SAFETY_RATING_GET_ELIGIBLE_FOR_TELEMATICS": {
     "TYPE": "GET",
     "URI": "bff/v2/mobile-app/insurance/eligible-for-telematics",
     "AUTH": true
   },
-  "INSURANCE_GET_DAILY_BREAKDOWN": {
+  "SAFETY_RATING_GET_DAILY_BREAKDOWN": {
     "TYPE": "GET",
     "URI": "bff/v2/mobile-app/insurance/daily-breakdown",
     "AUTH": true
   },
-  "INSURANCE_GET_TRIPS": {
+  "SAFETY_RATING_GET_TRIPS": {
     "TYPE": "GET",
     "URI": "bff/v2/mobile-app/insurance/trips",
+    "AUTH": true
+  },
+  "SAFETY_RATING_GET_ESTIMATED_SAFETY_SCORE": {
+    "TYPE": "POST",
+    "URI": "bff/v2/mobile-app/insurance/calculate-safety-rating",
     "AUTH": true
   },
   "COMMERCE_POST_INVOICE": {
@@ -1245,6 +1335,11 @@
     "URI": "bff/v2/mobile-app/charging/signed-token",
     "AUTH": true
   },
+  "CHARGING_BALANCE_GET_IS_BLOCKED": {
+    "TYPE": "GET",
+    "URI": "bff/v2/mobile-app/charging-cn/supercharger-status",
+    "AUTH": true
+  },
   "CHARGING_HISTORY": {
     "TYPE": "GET",
     "URI": "bff/v2/mobile-app/charging/history",
@@ -1278,6 +1373,16 @@
   "CHARGING_SET_BILLING_ADDRESS": {
     "TYPE": "POST",
     "URI": "bff/v2/mobile-app/charging/billing-address",
+    "AUTH": true
+  },
+  "FEATURE_CONFIG": {
+    "TYPE": "GET",
+    "URI": "api/1/users/feature_config",
+    "AUTH": true
+  },
+  "DASHCAM_SAVE_CLIP": {
+    "TYPE": "POST",
+    "URI": "api/1/vehicles/{vehicle_id}/command/dashcam_save_clip",
     "AUTH": true
   }
 }
