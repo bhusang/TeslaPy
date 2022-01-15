@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """ Tesla Owner API CLI application using TeslaPy module """
 
 # Author: Tim Dorssers
@@ -6,18 +7,33 @@ from __future__ import print_function
 import ast
 import logging
 import argparse
-import json
 try:
-    from selenium import webdriver  # 3.13.0 or higher required
+    import webview  # Optional pywebview 3.0 or higher
+except ImportError:
+    webview = None
+try:
+    from selenium import webdriver  # Optional selenium 3.13.0 or higher
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.support.ui import WebDriverWait
 except ImportError:
-    webdriver = None  # Optional import
-from teslapy import Tesla, Vehicle
+    webdriver = None
+from teslapy import Tesla, Vehicle, Battery, SolarPanel
 
 raw_input = vars(__builtins__).get('raw_input', input)  # Py2/3 compatibility
 
 def custom_auth(url):
+    # Use pywebview if no web browser specified
+    if webview and not (webdriver and args.web is not None):
+        result = ['']
+        window = webview.create_window('Login', url)
+        def on_loaded():
+            result[0] = window.get_current_url()
+            if 'void/callback' in result[0].split('?')[0]:
+                window.destroy()
+        window.loaded += on_loaded
+        webview.start()
+        return result[0]
+    # Use selenium to control specified web browser
     with [webdriver.Chrome, webdriver.Edge, webdriver.Firefox, webdriver.Opera,
           webdriver.Safari][args.web]() as browser:
         logging.info('Selenium opened %s', browser.capabilities['browserName'])
@@ -30,9 +46,10 @@ def main():
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
                         format=default_format)
     with Tesla(args.email, verify=args.verify, proxy=args.proxy) as tesla:
-        if webdriver:
+        if (webdriver and args.web is not None) or webview:
             tesla.authenticator = custom_auth
-        tesla.fetch_token()
+        if args.timeout:
+            tesla.timeout = args.timeout
         selected = prod = tesla.vehicle_list() + tesla.battery_list()
         if args.filter:
             selected = [p for p in prod for v in p.values() if v == args.filter]
@@ -41,8 +58,6 @@ def main():
             print('Product %d:' % i)
             # Show information or invoke API depending on arguments
             if args.list:
-                print(repr(product))
-                print(type(product))
                 print(product)
             if isinstance(product, Vehicle):
                 if args.option:
@@ -57,31 +72,59 @@ def main():
                     print(product.get_nearby_charging_sites())
                 if args.mobile:
                     print(product.mobile_enabled())
-                if args.start:
-                    print(product.remote_start_drive())
                 if args.stream:
-                    product.stream(lambda x: print(x))
+                    product.stream(print)
                 if args.service:
                     print(product.get_service_scheduling_data())
-            elif args.battery:
+                if args.history:
+                    print(product.get_charge_history())
+            elif isinstance(product, Battery) and args.battery:
                 print(product.get_battery_data())
-            if args.api:
+            elif isinstance(product, SolarPanel) and args.site:
+                print(product.get_site_data())
+            if args.api or args.command:
                 data = {}
                 for key, value in args.keyvalue or []:
                     try:
                         data[key] = ast.literal_eval(value)
-                    except ValueError:
+                    except (SyntaxError, ValueError):
                         data[key] = value
-                print(product.api(args.api, **data))
+                if args.api:
+                    for commandargs in args.api:
+                        command = commandargs.pop(0)
+                        command_data = {}
+                        for keyvalue in commandargs or []:
+                            key, value = keyvalue.split('=', 1)
+                            try:
+                                command_data[key] = ast.literal_eval(value)
+                            except (SyntaxError, ValueError):
+                                command_data[key] = value
+                        if not command_data:
+                            command_data = data
+                        print(product.api(command, **command_data))
+                else:
+                    print(product.command(args.command, **data))
+            if args.user:
+                print(product.get_user_details())
+        if args.logout:
+            if webview and not (webdriver and args.web is not None):
+                window = webview.create_window('Logout', tesla.logout())
+                webview.start()
+            else:
+                tesla.logout(not (webdriver and args.web is not None))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Tesla Owner API CLI')
     parser.add_argument('-e', dest='email', help='login email', required=True)
     parser.add_argument('-f', dest='filter', help='filter on id, vin, etc.')
-    parser.add_argument('-a', dest='api', help='API call endpoint name')
+    parser.add_argument('-a', dest='api', help='API call endpoint name',
+                        metavar=('API', 'KEYVALUE'), action='append', nargs='+')
     parser.add_argument('-k', dest='keyvalue', help='API parameter (key=value)',
                         action='append', type=lambda kv: kv.split('=', 1))
     parser.add_argument('-c', dest='command', help='product command endpoint')
+    parser.add_argument('-t', dest='timeout', type=int,
+                        help='connect/read timeout')
+    parser.add_argument('-p', dest='proxy', help='proxy server URL')
     parser.add_argument('-l', '--list', action='store_true',
                         help='list all selected vehicles/batteries')
     parser.add_argument('-o', '--option', action='store_true',
@@ -98,22 +141,27 @@ if __name__ == "__main__":
                         help='list nearby charging sites')
     parser.add_argument('-m', '--mobile', action='store_true',
                         help='get mobile enabled state')
-    parser.add_argument('-s', '--start', action='store_true',
-                        help='remote start drive')
+    parser.add_argument('-s', '--site', action='store_true',
+                        help='get current site generation data')
     parser.add_argument('-d', '--debug', action='store_true',
                         help='set logging level to debug')
     parser.add_argument('-r', '--stream', action='store_true',
                         help='receive streaming vehicle data on-change')
-    parser.add_argument('--service', action='store_true',
+    parser.add_argument('-S', '--service', action='store_true',
                         help='get service self scheduling eligibility')
-    parser.add_argument('--verify', action='store_false',
+    parser.add_argument('-H', '--history', action='store_true',
+                        help='get charging history data')
+    parser.add_argument('-V', '--verify', action='store_false',
                         help='disable verify SSL certificate')
+    parser.add_argument('-L', '--logout', action='store_true',
+                        help='clear token from cache and logout')
+    parser.add_argument('-u', '--user', action='store_true',
+                        help='get user account details')
     if webdriver:
-        parser.add_argument('--chrome', action='store_const', dest='web',
-                            const=0, default=0, help='use Chrome (default)')
-        for c, s in enumerate(('edge', 'firefox', 'opera', 'safari'), start=1):
+        for c, s in enumerate(('chrome', 'edge', 'firefox', 'opera', 'safari')):
+            d, h = (0, ' (default)') if not webview and c == 0 else (None, '')
             parser.add_argument('--' + s, action='store_const', dest='web',
-                                const=c, help='use %s browser' % s.title())
-    parser.add_argument('--proxy', help='proxy server URL')
+                                help='use %s WebDriver' % s.title() + h,
+                                const=c, default=d)
     args = parser.parse_args()
     main()

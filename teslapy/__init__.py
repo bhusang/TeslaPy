@@ -6,7 +6,7 @@ for reuse and refreshed automatically. The vehicle option codes are loaded from
 
 # Author: Tim Dorssers
 
-__version__ = '2.0.0'
+__version__ = '2.3.0'
 
 import os
 import ast
@@ -31,7 +31,6 @@ import websocket  # websocket-client v0.49.0 up to v0.58.0 is not supported
 requests.packages.urllib3.disable_warnings()
 
 BASE_URL = 'https://owner-api.teslamotors.com/'
-CLIENT_ID = 'e4a9949fcfa04068f59abb5a658f2bac0a3428e4652315490b659d5ab3f35a9e'
 SSO_BASE_URL = 'https://auth.tesla.com/'
 SSO_CLIENT_ID = 'ownerapi'
 STREAMING_BASE_URL = 'wss://streaming.vn.teslamotors.com/'
@@ -47,13 +46,14 @@ except NameError:
     pass
 
 
-class Tesla(requests.Session):
+class Tesla(OAuth2Session):
     """ Implements a session manager for the Tesla Motors Owner API
 
     email: SSO identity.
     verify: (optional) Verify SSL certificate.
     proxy: (optional) URL of proxy server.
     retry: (optional) Number of connection retries or `Retry` instance.
+    timeout: (optional) Connect/read timeout.
     user_agent: (optional) The User-Agent string.
     authenticator: (optional) Function with one argument, the authorization URL,
                    that returns the redirected URL.
@@ -62,10 +62,10 @@ class Tesla(requests.Session):
     cache_dumper: (optional) Function with one argument, the cache dict.
     """
 
-    def __init__(self, email, verify=True, proxy=None, retry=0,
+    def __init__(self, email, verify=True, proxy=None, retry=0, timeout=10,
                  user_agent=__name__ + '/' + __version__, authenticator=None,
                  cache_file='cache.json', cache_loader=None, cache_dumper=None):
-        super(Tesla, self).__init__()
+        super(Tesla, self).__init__(client_id=SSO_CLIENT_ID)
         if not email:
             raise ValueError('`email` is not set')
         self.email = email
@@ -73,13 +73,16 @@ class Tesla(requests.Session):
         self.cache_loader = cache_loader or self._cache_load
         self.cache_dumper = cache_dumper or self._cache_dump
         self.cache_file = cache_file
-        self.token = {}
-        self.expires_at = 0
-        self.authorized = False
+        self.timeout = timeout
         self.endpoints = {}
-        self.sso_token = {}
-        self.sso_base = SSO_BASE_URL
-        # Set Session properties
+        self._sso_base = SSO_BASE_URL
+        self.code_verifier = None
+        # Set OAuth2Session properties
+        self.scope = ('openid', 'email', 'offline_access')
+        self.redirect_uri = SSO_BASE_URL + 'void/callback'
+        self.auto_refresh_url = self._sso_base + 'oauth2/v3/token'
+        self.auto_refresh_kwargs = {'client_id': SSO_CLIENT_ID}
+        self.token_updater = self._token_updater
         self.mount('https://', requests.adapters.HTTPAdapter(max_retries=retry))
         self.headers.update({'Content-Type': 'application/json',
                              'User-Agent': user_agent})
@@ -89,28 +92,27 @@ class Tesla(requests.Session):
             self.proxies.update({'https': proxy})
         self._token_updater()  # Try to read token from cache
 
-    def request(self, method, url, **kwargs):
-        """ Extends base class method to support bearer token insertion. Raises
-        HTTPError when an error occurs.
+    @property
+    def expires_at(self):
+        """ Returns unix time when token needs refreshing """
+        return self.token.get('expires_at')
 
-        Return type: JsonDict
+    def request(self, method, url, serialize=True, **kwargs):
+        """ Overriddes base method to support relative URLs, serialization and
+        error message handling. Raises HTTPError when an error occurs.
+
+        Return type: JsonDict or String or requests.Response
         """
-        # Auto refresh token and insert access token into headers
-        if self.authorized:
-            if 0 < self.expires_at < time.time():
-                self.refresh_token()
-            self.headers.update({'Authorization':
-                                 'Bearer ' + self.token['access_token']})
+        if url.startswith(self._sso_base):
+            return super(Tesla, self).request(method, url, **kwargs)
         # Construct URL and send request with optional serialized data
-        url = BASE_URL + url.strip('/')
-        kwargs.setdefault('timeout', 10)
-        data = kwargs.pop('data', {})
-        logger.debug('Requesting url %s using method %s', url, method)
-        logger.debug('Supplying headers %s and data %s', self.headers, data)
-        logger.debug('Passing through key word arguments %s', kwargs)
-        response = super(Tesla, self).request(method, url, json=data, **kwargs)
+        url = urljoin(BASE_URL, url)
+        kwargs.setdefault('timeout', self.timeout)
+        if serialize and 'data' in kwargs:
+            kwargs['json'] = kwargs.pop('data')
+        response = super(Tesla, self).request(method, url, **kwargs)
         # Error message handling
-        if 400 <= response.status_code < 600:
+        if serialize and 400 <= response.status_code < 600:
             try:
                 lst = [str(v).strip('.') for v in response.json().values() if v]
                 response.reason = '. '.join(lst)
@@ -118,62 +120,91 @@ class Tesla(requests.Session):
                 pass
         response.raise_for_status()  # Raise HTTPError, if one occurred
         # Deserialize response
-        return response.json(object_hook=JsonDict)
+        if serialize:
+            return response.json(object_hook=JsonDict)
+        return response.text
 
-    def fetch_token(self):
-        """ Sign in using Tesla's SSO service to request a JWT bearer. Raises
-        HTTPError or CustomOAuth2Error. """
+    def authorization_url(self, url='oauth2/v3/authorize', **kwargs):
+        """ Overriddes base method to form an authorization URL with PKCE
+        extension for Tesla's SSO service. Raises HTTPError.
+
+        Return type: String
+        """
         if self.authorized:
             return
         # Generate code verifier and challenge for PKCE (RFC 7636)
-        code_verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b'=')
-        unencoded_digest = hashlib.sha256(code_verifier).digest()
+        self.code_verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b'=')
+        unencoded_digest = hashlib.sha256(self.code_verifier).digest()
         code_challenge = base64.urlsafe_b64encode(unencoded_digest).rstrip(b'=')
         # Prepare for OAuth 2 Authorization Code Grant flow
-        oauth = OAuth2Session(client_id=SSO_CLIENT_ID,
-                              scope=('openid', 'email', 'offline_access'),
-                              redirect_uri=SSO_BASE_URL + 'void/callback')
-        oauth.verify = self.verify
-        oauth.trust_env = self.trust_env
-        oauth.proxies = self.proxies
-        oauth.headers['User-Agent'] = self.headers['User-Agent']
-        url, _ = oauth.authorization_url(self.sso_base + 'oauth2/v3/authorize',
-                                         code_challenge=code_challenge,
-                                         code_challenge_method='S256',
-                                         login_hint=self.email)
+        url = urljoin(self._sso_base, url)
+        kwargs['code_challenge'] = code_challenge
+        kwargs['code_challenge_method'] = 'S256'
+        kwargs['login_hint'] = self.email
+        url, _ = super(Tesla, self).authorization_url(url, **kwargs)
         # Detect account's registered region
-        response = oauth.get(url)
+        response = self.get(url)
         response.raise_for_status()  # Raise HTTPError, if one occurred
         if response.history:
-            self.sso_base = urljoin(response.url, '/')
-        # Open SSO page for user authorization through redirection
-        url = self.authenticator(response.url)
-        # Use authorization response code in redirected location to get token
-        oauth.fetch_token(self.sso_base + 'oauth2/v3/token',
-                          authorization_response=url, include_client_id=True,
-                          code_verifier=code_verifier)
-        self.sso_token = oauth.token
-        self._fetch_jwt(oauth)  # Access protected resource
+            self._sso_base = urljoin(response.url, '/')
+            self.auto_refresh_url = self._sso_base + 'oauth2/v3/token'
+        return response.url
 
-    def _fetch_jwt(self, oauth):
-        """ Perform RFC 7523 JSON web token exchange for Owner API access """
-        data = {'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                'client_id': CLIENT_ID}
-        response = oauth.post(BASE_URL + 'oauth/token', data=data)
-        response.raise_for_status()  # Raise HTTPError, if one occurred
-        self.token = response.json()
-        self.expires_at = self.token['created_at'] + self.token['expires_in']
-        logger.debug('Got JWT bearer, expires at %s',
-                     time.ctime(self.expires_at))
-        self.authorized = True
+    def fetch_token(self, token_url='oauth2/v3/token', **kwargs):
+        """ Overriddes base method to sign into Tesla's SSO service using
+        Authorization Code grant with PKCE extension. Raises HTTPError or
+        CustomOAuth2Error.
+        """
+        if self.authorized:
+            return
+        if kwargs.get('authorization_response') is None:
+            # Open SSO page for user authorization through redirection
+            url = self.authorization_url()
+            kwargs['authorization_response'] = self.authenticator(url)
+        # Use authorization code in redirected location to get token
+        token_url = urljoin(self._sso_base, token_url)
+        kwargs['include_client_id'] = True
+        kwargs.setdefault('code_verifier', self.code_verifier)
+        super(Tesla, self).fetch_token(token_url, **kwargs)
         self._token_updater()  # Save new token
+
+    def refresh_token(self, token_url='oauth2/v3/token', **kwargs):
+        """ Overriddes base method to refresh Tesla's SSO token """
+        if not self.authorized:
+            return
+        token_url = urljoin(self._sso_base, token_url)
+        super(Tesla, self).refresh_token(token_url, **kwargs)
+        self._token_updater()  # Save new token
+
+    def logout(self, sign_out=False):
+        """ Removes token from cache, returns logout URL, and optionally logs
+        out of default browser.
+
+        Return type: String
+        """
+        if not self.authorized:
+            return
+        url = self._sso_base + 'oauth2/v3/logout?client_id=' + SSO_CLIENT_ID
+        # Built-in sign out method
+        if sign_out:
+            if webbrowser.open(url):
+                logger.debug('Opened %s with default browser', url)
+            else:
+                print('Open this URL to sign out: ' + url)
+        # Empty token dict, update cache and remove access_token
+        self.token = {}
+        self._token_updater()
+        del self.access_token
+        return url
 
     @staticmethod
     def _authenticate(url):
         """ Default authenticator method """
-        logger.debug('Opening %s with default browser', url)
         print('Use browser to login. Page Not Found will be shown at success.')
-        webbrowser.open(url)
+        if webbrowser.open(url):
+            logger.debug('Opened %s with default browser', url)
+        else:
+            print('Open this URL to authenticate: ' + url)
         return input('Enter URL after authentication: ')
 
     def _cache_load(self):
@@ -195,56 +226,37 @@ class Tesla(requests.Session):
         else:
             logger.debug('Updated cache')
 
-    def _token_updater(self):
+    def _token_updater(self, token=None):
         """ Handles token persistency """
         cache = self.cache_loader()
         if not isinstance(cache, dict):
             raise ValueError('`cache_loader` must return dict')
+        if token:
+            self.token = token
         # Write token to cache
         if self.authorized:
-            cache[self.email] = {'url': self.sso_base, 'sso': self.sso_token,
-                                 SSO_CLIENT_ID: self.token}
+            cache[self.email] = {'url': self._sso_base, 'sso': self.token}
             self.cache_dumper(cache)
         # Read token from cache
         elif self.email in cache:
-            self.sso_base = cache[self.email].get('url', SSO_BASE_URL)
-            self.sso_token = cache[self.email].get('sso', {})
-            self.token = cache[self.email].get(SSO_CLIENT_ID, {})
+            self._sso_base = cache[self.email].get('url', SSO_BASE_URL)
+            self.auto_refresh_url = self._sso_base + 'oauth2/v3/token'
+            self.token = cache[self.email].get('sso', {})
             if not self.token:
                 return
-            self.expires_at = (self.token['created_at']
-                               + self.token['expires_in'])
-            self.authorized = True
             # Log the token validity
             if 0 < self.expires_at < time.time():
-                logger.debug('Cached JWT bearer expired')
+                logger.debug('Cached SSO token expired')
             else:
-                logger.debug('Cached JWT bearer, expires at %s',
+                logger.debug('Cached SSO token expires at %s',
                              time.ctime(self.expires_at))
-
-    def refresh_token(self):
-        """ Refreshes the SSO token and requests a new JWT bearer """
-        if not self.sso_token:
-            return
-        # Prepare session for token refresh
-        oauth = OAuth2Session(client_id=SSO_CLIENT_ID, token=self.sso_token,
-                              scope=('openid', 'email', 'offline_access'))
-        oauth.verify = self.verify
-        oauth.trust_env = self.trust_env
-        oauth.proxies = self.proxies
-        oauth.headers['User-Agent'] = self.headers['User-Agent']
-        # Refresh token request must include client_id
-        oauth.refresh_token(self.sso_base + 'oauth2/v3/token',
-                            client_id=SSO_CLIENT_ID)
-        self.sso_token = oauth.token
-        self._fetch_jwt(oauth)  # Access protected resource
 
     def api(self, name, path_vars=None, **kwargs):
         """ Convenience method to perform API request for given endpoint name,
         with keyword arguments as parameters. Substitutes path variables in URI
         using path_vars. Raises ValueError if endpoint name is not found.
 
-        Return type: JsonDict
+        Return type: JsonDict or String
         """
         path_vars = path_vars or {}
         # Load API endpoints once
@@ -260,9 +272,6 @@ class Tesla(requests.Session):
             endpoint = self.endpoints[name]
         except KeyError:
             raise ValueError('Unknown endpoint name ' + name)
-        # Only JSON is supported
-        if endpoint.get('CONTENT', 'JSON') != 'JSON' or name == 'STATUS':
-            raise NotImplementedError('Endpoint %s not implemented' % name)
         # Fetch token if not authorized and API requires authorization
         if endpoint['AUTH'] and not self.authorized:
             self.fetch_token()
@@ -272,9 +281,11 @@ class Tesla(requests.Session):
         except KeyError as e:
             raise ValueError('%s requires path variable %s' % (name, e))
         # Perform request using given keyword arguments as parameters
-        if endpoint['TYPE'] == 'GET':
-            return self.request('GET', uri, params=kwargs)
-        return self.request(endpoint['TYPE'], uri, data=kwargs)
+        arg_name = 'params' if endpoint['TYPE'] == 'GET' else 'json'
+        serialize = endpoint.get('CONTENT') != 'HTML' and name != 'STATUS'
+        return self.request(endpoint['TYPE'], uri, serialize,
+                            withhold_token=not endpoint['AUTH'],
+                            **{arg_name: kwargs})
 
     def vehicle_list(self):
         """ Returns a list of `Vehicle` objects """
@@ -301,7 +312,7 @@ class JsonDict(dict):
 
     def __str__(self):
         """ Serialize dict to JSON formatted string with indents """
-        return json.dumps(repr(self), indent=4)
+        return json.dumps(self, indent=4)
 
 
 class Vehicle(JsonDict):
@@ -318,9 +329,8 @@ class Vehicle(JsonDict):
 
     def _subscribe(self, wsapp):
         """ Authenticate and select streaming telemetry columns """
-        msg = {'msg_type': 'data:subscribe_oauth',
-               'token': self.tesla.token['access_token'],
-               'value': ','.join(self.COLS), 'tag': str(self['vehicle_id'])}
+        msg = {'msg_type': 'data:subscribe_oauth', 'value': ','.join(self.COLS),
+               'token': self.tesla.access_token, 'tag': str(self['vehicle_id'])}
         wsapp.send(json.dumps(msg))
 
     def _parse_msg(self, wsapp, message):
@@ -334,7 +344,7 @@ class Vehicle(JsonDict):
             for key, value in data.items():
                 try:
                     data[key] = ast.literal_eval(value) if value else None
-                except ValueError:
+                except (SyntaxError, ValueError):
                     pass
             logger.debug('Update %s', json.dumps(data))
             if self.callback:
@@ -400,12 +410,12 @@ class Vehicle(JsonDict):
 
     def sync_wake_up(self, timeout=60, interval=2, backoff=1.15):
         """ Wakes up vehicle if needed and waits for it to come online """
-        #logger.info('%s is %s', self['display_name'], self['state'])
+        logger.info('%s is %s', self['display_name'], self['state'])
         if self['state'] != 'online':
             self.api('WAKE_UP')  # Send wake up command
             start_time = time.time()
             while self['state'] != 'online':
-                #logger.debug('Waiting for %d seconds', interval)
+                logger.debug('Waiting for %d seconds', interval)
                 time.sleep(int(interval))
                 # Get vehicle status
                 self.get_vehicle_summary()
@@ -414,7 +424,7 @@ class Vehicle(JsonDict):
                     raise VehicleError('%s not woken up within %s seconds'
                                        % (self['display_name'], timeout))
                 interval *= backoff
-            #logger.info('%s is %s', self['display_name'], self['state'])
+            logger.info('%s is %s', self['display_name'], self['state'])
 
     def option_code_list(self):
         """ Returns a list of known option code titles """
@@ -446,6 +456,22 @@ class Vehicle(JsonDict):
         return next((enabled for enabled in response['enabled_vins']
                      if enabled['vin'] == self['vin']), {})
 
+    def get_charge_history(self):
+        """ Lists vehicle charging history data points """
+        return self.api('VEHICLE_CHARGE_HISTORY')['response']
+
+    def get_user(self, device_country='US', device_language='EN'):
+        """ Retrieve user account data """
+        return self.tesla.api('USER', vin=self['vin'],
+                              deviceCountry=device_country,
+                              deviceLanguage=device_language)['data']
+
+    def get_user_details(self, device_country='US', device_language='EN'):
+        """ Retrieve user account details """
+        return self.tesla.api('USER_ACCOUNT_GET_DETAILS', vin=self['vin'],
+                              deviceCountry=device_country,
+                              deviceLanguage=device_language)['data']
+
     def mobile_enabled(self):
         """ Checks if the Mobile Access setting is enabled in the car """
         # Construct URL and send request
@@ -456,8 +482,8 @@ class Vehicle(JsonDict):
         """ Returns a PNG formatted composed vehicle image. Valid views are:
         STUD_3QTR, STUD_SEAT, STUD_SIDE, STUD_REAR and STUD_WHEEL """
         if options is None:
-            msg = 'compose_image requires options for the image to be accurate'
-            logger.warning(msg)
+            logger.warning('`compose_image` requires `options` to be set for '
+                           'an accurate image')
         # Derive model from VIN and other properties from (given) option codes
         params = {'model': 'm' + self['vin'][3].lower(),
                   'bkba_opt': 1, 'view': view, 'size': size,
@@ -493,35 +519,60 @@ class Vehicle(JsonDict):
 
     def decode_vin(self):
         """ Returns decoded VIN as dict """
-        make = 'Model ' + self['vin'][3]
-        body = {'A': 'Hatchback 5 Dr / LHD', 'B': 'Hatchback 5 Dr / RHD',
-                'C': 'MPV / 5 Dr / LHD', 'D': 'MPV / 5 Dr / RHD',
-                'E': 'Sedan 4 Dr / LHD', 'F': 'Sedan 4 Dr / RHD',
-                'G': 'MPV / 5 Dr / LHD'}.get(self['vin'][4], 'Unknown')
-        batt = {'E': 'Electric', 'H': 'High Capacity', 'S': 'Standard Capacity',
-                'V': 'Ultra Capacity'}.get(self['vin'][6], 'Unknown')
-        drive = {'1': 'Single Motor', '2': 'Dual Motor',
-                 '3': 'Performance Single Motor', 'C': 'Base, Tier 2',
-                 '4': 'Performance Dual Motor', 'P': 'Performance, Tier 7',
-                 'A': 'Single Motor', 'B': 'Dual Motor',
-                 'F': 'Performance Dual Motor', 'G': 'Base, Tier 4',
+        make = 'Tesla Model ' + self['vin'][3]
+        body = {'A': 'Hatch back 5 Dr / LHD', 'B': 'Hatch back 5 Dr / RHD',
+                'C': 'Class E MPV / 5 Dr / LHD', 'E': 'Sedan 4 Dr / LHD',
+                'D': 'Class E MPV / 5 Dr / RHD', 'F': 'Sedan 4 Dr / RHD',
+                'G': 'Class D MPV / 5 Dr / LHD', 'H': 'Class D MPV / 5 Dr / RHD'
+                }.get(self['vin'][4], 'Unknown')
+        belt = {'1': 'Type 2 manual seatbelts (FR, SR*3) with front airbags, '
+                     'PODS, side inflatable restraints, knee airbags (FR)',
+                '3': 'Type 2 manual seatbelts (FR, SR*2) with front airbags, '
+                     'side inflatable restraints, knee airbags (FR)',
+                '4': 'Type 2 manual seatbelts (FR, SR*2) with front airbags, '
+                     'side inflatable restraints, knee airbags (FR)',
+                '5': 'Type 2 manual seatbelts (FR, SR*2) with front airbags, '
+                     'side inflatable restraints',
+                '6': 'Type 2 manual seatbelts (FR, SR*3) with front airbags, '
+                     'side inflatable restraints',
+                '7': 'Type 2 manual seatbelts (FR, SR*3) with front airbags, '
+                     'side inflatable restraints & active hood',
+                '8': 'Type 2 manual seatbelts (FR, SR*2) with front airbags, '
+                     'side inflatable restraints & active hood',
+                'A': 'Type 2 manual seatbelts (FR, SR*3, TR*2) with front '
+                     'airbags, PODS, side inflatable restraints, knee airbags (FR)',
+                'B': 'Type 2 manual seatbelts (FR, SR*2, TR*2) with front '
+                     'airbags, PODS, side inflatable restraints, knee airbags (FR)',
+                'C': 'Type 2 manual seatbelts (FR, SR*2, TR*2) with front '
+                     'airbags, PODS, side inflatable restraints, knee airbags (FR)',
+                'D': 'Type 2 Manual Seatbelts (FR, SR*3) with front airbag, '
+                     'PODS, side inflatable restraints, knee airbags (FR)'
+                }.get(self['vin'][5], 'Unknown')
+        batt = {'E': 'Electric (NMC)', 'F': 'Li-Phosphate (LFP)',
+                'H': 'High Capacity (NMC)', 'S': 'Standard (NMC)',
+                'V': 'Ultra Capacity (NMC)'}.get(self['vin'][6], 'Unknown')
+        drive = {'1': 'Single Motor - Standard', '2': 'Dual Motor - Standard',
+                 '3': 'Single Motor - Performance', '5': 'P2 Dual Motor',
+                 '4': 'Dual Motor - Performance', '6': 'P2 Tri Motor',
+                 'A': 'Single Motor', 'B': 'Dual Motor - Standard',
+                 'C': 'Dual Motor - Performance', 'D': 'Single Motor',
+                 'E': 'Dual Motor - Standard', 'F': 'Dual Motor - Performance',
+                 'P': 'Performance, Tier 7', 'G': 'Base, Tier 4',
                  'N': 'Base, Tier 7'}.get(self['vin'][7], 'Unknown')
         year = 2009 + '9ABCDEFGHJKLMNPRSTVWXY12345678'.index(self['vin'][9])
-        plant = {'C': 'Shanghai, China', 'F': 'Fremont, CA, USA',
-                 'P': 'Palo Alto, CA, USA'}.get(self['vin'][10], 'Unknown')
-        return JsonDict(manufacturer='Tesla Motors, Inc.',
-                        make=make, body_type=body, battery_type=batt,
+        plant = {'1': 'Menlo Park, CA, USA', '3': 'Hethel, UK',
+                 'B': 'Berlin, Germany', 'C': 'Shanghai, China',
+                 'F': 'Fremont, CA, USA', 'P': 'Palo Alto, CA, USA',
+                 'R': 'Research'}.get(self['vin'][10], 'Unknown')
+        return JsonDict(manufacturer='Tesla Motors, Inc.', make=make,
+                        body_type=body, belt_system=belt, battery_type=batt,
                         drive_unit=drive, year=str(year), plant_code=plant)
-
-    def remote_start_drive(self):
-        """ Enables keyless driving for two minutes """
-        if not self.tesla.password:
-            raise ValueError('`password` is not set')
-        return self.command('REMOTE_START', password=self.tesla.password)
 
     def command(self, name, **kwargs):
         """ Wrapper method for vehicle command response error handling """
         response = self.api(name, **kwargs)['response']
+        if 'result' not in response:
+            return response
         if not response['result']:
             raise VehicleError(response['reason'])
         return response['result']
@@ -551,7 +602,7 @@ class Product(JsonDict):
         """ Retrieve live status of product
         kind: A telemetry type of 'backup', 'energy', 'power',
               'self_consumption', 'time_of_use_energy',
-              'time_of_use_self_consumption' and 'savings'
+              'time_of_use_self_consumption', 'savings' and 'soe'
         period: 'day', 'month', 'year', or 'lifetime'
         end_date: The final day in the data requested in the json format
                   '2021-02-28T07:59:59.999Z'
