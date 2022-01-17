@@ -410,7 +410,7 @@ class Vehicle(JsonDict):
 
     def sync_wake_up(self, timeout=60, interval=2, backoff=1.15):
         """ Wakes up vehicle if needed and waits for it to come online """
-        logger.info('%s is %s', self['display_name'], self['state'])
+        #logger.info('%s is %s', self['display_name'], self['state'])
         if self['state'] != 'online':
             self.api('WAKE_UP')  # Send wake up command
             start_time = time.time()
@@ -424,7 +424,7 @@ class Vehicle(JsonDict):
                     raise VehicleError('%s not woken up within %s seconds'
                                        % (self['display_name'], timeout))
                 interval *= backoff
-            logger.info('%s is %s', self['display_name'], self['state'])
+            #logger.info('%s is %s', self['display_name'], self['state'])
 
     def option_code_list(self):
         """ Returns a list of known option code titles """
