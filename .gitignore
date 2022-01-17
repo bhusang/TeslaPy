@@ -7,3 +7,4 @@ build/
 dist/
 TeslaPy.egg-info/
 geckodriver.log
+secrets.py
